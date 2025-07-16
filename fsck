@@ -1,0 +1,173 @@
+#!/home/roach/.luaver/lua/5.1.5/bin/lua
+-- TODO: fix shebang!!
+
+local pgname = "tman-fsck"
+local pgnver = "0.0.1"
+
+local lfs = require("lfs")
+local getopt = require("posix.unistd").getopt
+
+local FSCK = {}
+local Unit = {}
+local Column = {}
+
+
+-- TODO: make return value an integer
+local function elog(status, ...)
+    io.stderr:write(string.format("%s: ", pgname))
+    for _, val in pairs({...}) do
+        io.stderr:write(val, " ")
+    end
+    io.stderr:write('\n')
+    return status
+end
+
+local function _isdir()
+end
+
+-- NOTE: works only on Unix
+local function join_path(...)
+    return table.concat({...}, "/")
+end
+
+local function usage()
+    print([[
+Usage: tman fsck [OPTION]... COMMAND [ARGS]...
+
+    List of comamnds:
+        check   only check, do NOT change anything
+        hard    hard repair, with data loses but working FS
+        help    show this help masseage and exit
+        soft    soft repair, with data loses
+        ver     show version and exit ]])
+end
+
+function Unit.get(fname)
+    local buf, file
+    local key, value
+    local units = {}
+    local fmt = "%s/.tman/units"
+
+    file = io.open(string.format(fmt, fname))
+    if file then
+        buf = file:read("*l") or ""
+        key, value = string.match(buf, "(%w+) : ([%w%s]+)")
+        table.insert(units, { key = key, value = value })
+    end
+    return units
+end
+
+function Unit.check_prj(units)
+    local status = true
+    local _units = { "desc" }
+
+    for i, unit in pairs(units) do
+        if _units[i] ~= units[i].key then
+            status = false
+            elog(1, "'%s': no such key or out order", _units[i])
+        end
+    end
+    return status
+end
+
+function Unit.check_brd(units)
+end
+
+function Unit.check_task(units)
+end
+
+function Column.get(fname)
+    local file, buf
+    local colname = nil
+    local fmt = "%s/.tman/column"
+
+    file = io.open(string.format(fmt, fname))
+    if file then
+        buf = file:read("*l") or ""
+        colname = buf:match("column : (%w+)")
+    end
+    return colname
+end
+
+function Column.set(fname, colname)
+end
+
+function FSCK.check(basic)
+    local columns = {}
+    local projects = {}
+
+    for prj in lfs.dir(basic.taskdir) do
+        -- TODO: check that it's directory and nothing else
+        if prj ~= "." and prj ~= ".." and string.sub(prj, 1, 1) ~= "." then
+            local units = Unit.get(join_path(basic.taskdir, prj))
+            if not Unit.check_prj(units) then
+                elog(1, "error in project units")
+            end
+        end
+    end
+end
+
+function FSCK.repair_soft(basic)
+end
+
+function FSCK.repair_hard(basic)
+end
+
+function FSCK.help(basic)
+    return usage()
+end
+
+function FSCK.version(basic)
+    print("fsck", pgnver)
+    return 0
+end
+
+local bincmds = {
+    { name = "check", func = FSCK.check },
+    { name = "hard", func = FSCK.repair_hard },
+    { name = "help", func = FSCK.help },
+    { name = "soft", func = FSCK.repair_soft },
+    { name = "ver", func = FSCK.version },
+}
+
+local function main()
+    local showhelp = false
+    local cmd = "check"
+    local lastidx = 1
+    local basic = { }
+
+    for optopt, optarg, optind in getopt(arg, ":b:hi:p:T:P:") do
+        if optopt == "?" then
+            return elog(1, "unrecognized option", arg[optind - 1])
+        end
+        lastidx = optind
+        if optopt == "T" then
+            basic.taskdir = optarg
+            print("basic.taskdir", basic.taskdir)
+        elseif optopt == "P" then
+            basic.pgndir = optarg
+        elseif optopt == "b" then
+            basic.board = optarg
+        elseif optopt == "h" then
+            showhelp = true
+        elseif optopt == "i" then
+            basic.task = optarg
+        elseif optopt == "p" then
+            basic.project = optarg
+        end
+    end
+
+    if showhelp then
+        return usage()
+    end
+
+    cmd = table.remove(arg, lastidx) or cmd
+    for _, bin in pairs(bincmds) do
+        if cmd == bin.name then
+            return bin.func(basic)
+        end
+    end
+    return elog(1, "no such command", cmd)
+end
+
+os.exit(main())
